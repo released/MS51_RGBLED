@@ -22,6 +22,6 @@ Scenario :
 
 2. display data by setLED_Display , also include reset pulse in front and back
 
-- Demo procedure , change demo state per 5000 ms
+Demo procedure , change demo state per 5000 ms
 
-- enable ENABLE_GPIO_DEMO for GPIO toggle , to monitor each waveform status
+enable ENABLE_GPIO_DEMO for GPIO toggle , to monitor each waveform status
