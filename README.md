@@ -1,5 +1,19 @@
 # MS51_RGBLED
 
+update @ 2019/08/20
+
+Only define ENABLE_GPIO_TRIG_LED available
+
+1. Optimize GPIO toggle timing 
+
+2. upload picture for reference
+
+- bit 1 : high level 0.375*2 us , low level 0.375*1 us
+
+- bit 0 : high level 0.375*1 us , low level 0.375*2 us
+
+3. Demo procedure , change demo state per 500 ms
+
 update @ 2019/07/01
 
 Only define ENABLE_GPIO_TRIG_LED available

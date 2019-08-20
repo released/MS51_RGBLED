@@ -31,9 +31,15 @@
 //#define ENABLE_PWM_TRIG_LED
 //#define ENABLE_SPI_TRIG_LED
 #define ENABLE_GPIO_TRIG_LED
+//#define ENABLE_TIMER1_GPIO_TRIG_LED
 
 #define LED_NUM 								(18)	//(18)
-#define LED_DATA_LEN 							(LED_NUM * 3)		//(LED_NUM * 24)
+
+//#if defined (ENABLE_PWM_TRIG_LED)
+//#define LED_DATA_LEN 							(LED_NUM * 24)
+//#else
+#define LED_DATA_LEN 							(LED_NUM * 3)
+//#endif
 
 #define MS_LED_LATCH							(450)	//(450)
 #define MS_1MS									(1500)
@@ -47,7 +53,7 @@
 //#define TIMER_LOG_MS							(1000ul)
 //#define GPIO_TOGGLE_MS							(500ul)
 //#define UART_LOG_MS							(50ul)
-#define DEMO_MS								(5000ul)
+#define DEMO_MS								(500ul)//	(5000ul)
 
 #define HEARTBEAT_STEPS							(16)
 
@@ -87,24 +93,44 @@
 	
 	RES : more than 280£gs
 */
-
+#if defined (ENABLE_SPI_TRIG_LED)
 #define WS_SPI_FREQ 								(800000ul)
 #define WS_SPI_HIGH 								(0xFC)
 #define WS_SPI_LOW	 							(0xC0)
+#endif
 
-#define WS_RES 	 								(0x00) 
+//#define WS_RES 	 								(0x00) 
 
+#if defined (ENABLE_PWM_TRIG_LED)
 #define WS_PWM_FREQ 	 						(800000ul) 
 #define WS_PWM_HIGH 							(75) 
 #define WS_PWM_LOW 							(28) // 912 - 375 , 925 ~ 325
+#endif
 
 #define WS_RES_POS_FRONT						(0) 
 #define WS_RES_POS_BACK 						(1) 
 
+#if defined (ENABLE_TIMER1_GPIO_TRIG_LED)
+uint16_t count;
+uint16_t endcount;
+uint8_t flag;
+
+#define WS_FLAG_HIGH	 						(1)
+#define WS_FLAG_LOW	 						(0)
+#define WS_TIM_FREQ 							(800000ul)
+#define WS_TIM_HIGH 							(2)
+#define WS_TIM_LOW	 							(1)
+
+uint8_t u8TH1_Tmp = 0;
+uint8_t u8TL1_Tmp = 0;
+#endif
+
+#if defined (ENABLE_TIMER0_1MS_IRQ)
 uint8_t u8TH0_Tmp = 0;
 uint8_t u8TL0_Tmp = 0;
 uint16_t u16Cnt = 0;
-
+uint16_t u16Period = 0;
+#endif
 
 uint8_t DataBuffer[LED_DATA_LEN] = {0};
 
@@ -933,12 +959,140 @@ void delay_ms(uint16_t ms)
 	}
 }
 
+#if defined (ENABLE_TIMER1_GPIO_TRIG_LED)
+void OP_WS2812C_DATA1(void)
+{
+	endcount = WS_TIM_HIGH;
+	flag = WS_FLAG_HIGH;
+	count = 0;
+	while(count<endcount);
+
+	endcount = WS_TIM_LOW;
+	flag = WS_FLAG_LOW;
+	count = 0;
+	while(count<endcount);	
+}
+
+void OP_WS2812C_DATA0(void)
+{
+	endcount = WS_TIM_LOW;
+	flag = WS_FLAG_HIGH;
+	count = 0;
+	while(count<endcount);
+
+	endcount = WS_TIM_HIGH;
+	flag = WS_FLAG_LOW;
+	count = 0;
+	while(count<endcount);
+}
+
+
+void OP_WS2812C_Send_1Byte(uint8_t Data)
+{
+	uint8_t i = 0;
+
+	for (i = 0; i < 8; i ++)
+	{
+		if (Data & 0x80)
+		{
+			OP_WS2812C_DATA1();
+		}
+		else
+		{
+			OP_WS2812C_DATA0();
+		}
+		Data <<= 1;	
+	} 	
+}
+
+
+void OP_WS2812C_Send_1bit(uint8_t Data)
+{
+	switch(Data)
+	{
+		case 0: 
+			OP_WS2812C_DATA0();				
+			break;
+		default:
+			OP_WS2812C_DATA1();
+			break;
+	}	
+}
+
+void Timer1_IRQHandler(void)
+{
+	count++;
+	P00 = (flag == 1)?(1):(0);
+}
+
+void Timer1_ISR(void) interrupt 3        // Vector @  0x1B
+{
+    TH1 = u8TH1_Tmp;
+    TL1 = u8TL1_Tmp;
+    clr_TCON_TF1;
+	
+	Timer1_IRQHandler();
+}
+
+void Timer1_GPIO_Initial(void)
+{
+/*
+	WS2812C-2020
+	T1H 1 HIGH 580ns~1£gs
+	T1L 1 LOW 220ns~420ns
+	==> 1111 1100 (0xFC)	==> if FREQ = 6M
+	
+	T0H 0 HIGH 220ns~380ns
+	T0L 0 LOW 580ns~1£gs
+	==> 1100 0000 (0xC0)	==> if FREQ = 6M
+
+	1.25 us = (1/24M) * x , 
+	x = 30
+	=> 1/800 000 = (1/24 000000) , 
+	x = sysclock / target freq
+
+	=> target : 0.375 us
+	=> Tcy : 1/24M = 0.0417 us
+
+	TH : (65536 - target/Tcy)/256
+	TL : (65536 - target/Tcy)%256
+*/
+	uint16_t res = 0;
+
+	//GPIO	init
+	P00_PUSHPULL_MODE;	
+
+	//variable init
+	count = 0;
+	flag = 0;
+	P00 = 0;
+
+	//timer	init
+	ENABLE_TIMER1_MODE1;
+	TIMER1_FSYS;
+
+	res = 65536 - 300;	//0xFFFF - 0x1FF0;
+	u8TH1_Tmp = 0xFF ; //HIBYTE(res);//(SYS_CLOCK/WS_TIM_FREQ)
+	u8TL1_Tmp = 0x50 ;	//LOBYTE(res);
+
+    TH1 = u8TH1_Tmp;
+    TL1 = u8TL1_Tmp;
+
+    ENABLE_TIMER1_INTERRUPT;                       //enable Timer1 interrupt
+    ENABLE_GLOBAL_INTERRUPT;                       //enable interrupts
+  
+    set_TCON_TR1;                                  //Timer1 run
+
+}
+
+#endif
+
 #if defined (ENABLE_GPIO_TRIG_LED)
 void GPIO_WS2812C_DATA1(void)
 {				
 	P00 = 1;
 	nop;nop;nop;nop;nop;
-	nop;nop;nop;nop;nop;
+	P00 = 1;
 	nop;nop;nop;nop;nop;
 	
 	P00 = 0;
@@ -952,10 +1106,11 @@ void GPIO_WS2812C_DATA0(void)
 			
 	P00 = 0;
 	nop;nop;nop;nop;nop;
+	P00 = 0;
 	nop;nop;nop;nop;nop;	
 }
 
-void GPIO_WS2812C_Send_1Bye(uint8_t Data)
+void GPIO_WS2812C_Send_1Byte(uint8_t Data)
 {
 	uint8_t i = 0;
 
@@ -1038,8 +1193,8 @@ void SPI_Initial(uint8_t idx)
    
     clr_LSBFE;                                  								// MSB first         
 
-    clr_CPOL;                                   								// The SPI clock is low in idle mode
-//	set_CPOL;
+//    clr_CPOL;                                   								// The SPI clock is low in idle mode
+	set_CPOL;
     set_CPHA;                                   								// The data is sample on the second edge of SPI clock 
     
     set_MSTR;                                   							// SPI in Master mode 
@@ -1070,40 +1225,109 @@ void SPI_Initial(uint8_t idx)
 #if defined (ENABLE_PWM_TRIG_LED)
 void PWM_ISR (void) interrupt 13
 {
+	#if 0
+    clr_PWMCON0_PWMF;               // clear PWM interrupt flag
+	clr_EIE_EPWM;
+
+//	P13 = 0;
+	if ((LOAD) == 0)	//((u16Period) == 0)
+	{
+//		P14 = 1;
+		
+		clr_PMEN0;
+		clr_PMD0;	//set_PMD0;
+
+//		P14 = 0;
+	}
+
+//	#else
     clr_PWMCON0_PWMF;               // clear PWM interrupt flag
 	clr_EIE_EPWM;
 	if (LOAD == 0)
 	{		
 		clr_PWMCON0_PWMRUN;	
 	}
+	#endif
 }
 
 void PWMx_CHx_SetDuty(uint16_t d)
 {
 	uint16_t res = 0 ;
-	//USE interrupt ?
-    PWM_INT_PWM0;  
-    PWM_RISING_INT; 
-    set_EIE_EPWM;                  /*Enable PWM interrupt  */
-    ENABLE_GLOBAL_INTERRUPT; 
+//	uint16_t cnt = 0x1 ;
 	
-	res = d*(MAKEWORD(PWMPH,PWMPL)+1)/100;
+	//USE interrupt ?
+//    PWM_INT_PWM0;  
+//    PWM_RISING_INT; 
+//    set_EIE_EPWM;                  /*Enable PWM interrupt  */
+//    ENABLE_GLOBAL_INTERRUPT; 
+
+	u16Period = MAKEWORD(PWMPH,PWMPL);
+	res = d*(u16Period+1)/100;
 
     PWM0H = HIBYTE(res);
     PWM0L = LOBYTE(res);
-
     set_PWMCON0_LOAD;
     set_PWMCON0_PWMRUN;	
+
+//	res = u16Period-1;
+//	while (u16Period-- != 0);
+
+//	while(cnt--);	
+//    PWM0H = HIBYTE(0);
+//    PWM0L = LOBYTE(0);
+//    set_PWMCON0_LOAD;
+//    set_PWMCON0_PWMRUN;	
+
+//	clr_PWMCON0_PWMRUN;
 }
 
-void PWMx_CHx_Init(void)
+void PWMx_WS2812C_Send_1byte(uint8_t Data)
+{
+	#if 1
+
+	uint8_t i = 0;
+
+	for (i = 0; i < 8; i ++)
+	{
+		if (Data & 0x80)
+		{
+			PWMx_CHx_SetDuty(WS_PWM_HIGH);
+		}
+		else
+		{
+			PWMx_CHx_SetDuty(WS_PWM_LOW);
+		}
+		Data <<= 1;	
+	} 	
+
+	#else
+	switch(Data)
+	{
+		case 0:       
+			PWMx_CHx_SetDuty(WS_PWM_LOW);  
+			break;
+		default:      
+			PWMx_CHx_SetDuty(WS_PWM_HIGH);  
+			break;
+	}	
+	#endif
+}
+
+void PWMx_CHx_Initial(void)
 {
 	uint16_t res = 0;
 
-	P12_PUSHPULL_MODE;
+	P12_PUSHPULL_MODE;	//Add this to enhance MOS output capability
     PWM0_P12_OUTPUT_ENABLE;
 	
     PWM_IMDEPENDENT_MODE;
+
+	/*
+		In  edge-aligned mode, the 16-bit counter  uses single slop  operation  by  counting  up  from  0000H  to 
+		{PWMnPH, PWMnPL} and then starting from 0000H.
+	*/
+	PWM_EDGE_TYPE;
+	
     PWM_CLOCK_DIV_2;
 
 //	clr_PWMCON0_PWMRUN;
@@ -1163,7 +1387,7 @@ void setLED_ResetPulse(uint8_t pos)	//target : 280us
 	{
 		delay(MS_LED_LATCH);
 	}
-	#elif defined (ENABLE_GPIO_TRIG_LED)
+	#elif defined (ENABLE_GPIO_TRIG_LED) | defined (ENABLE_TIMER1_GPIO_TRIG_LED)
 	P00 = 0;
 	
 	if (pos == WS_RES_POS_FRONT)	//57 us
@@ -1184,16 +1408,19 @@ void setLED_Display(uint16_t DataCount)
 
 #if defined (ENABLE_PWM_TRIG_LED)	// PWM unable to stop per 24 bit data
 	uint16_t i = 0;
+	signed int j = 0;
+
 	setLED_ResetPulse(WS_RES_POS_FRONT);
 
-	for(i = 0; i < DataCount ;i++ )
-	{	
-//		P13 = 1;
-		PWMx_CHx_SetDuty(DataBuffer[i]);
-//		P13 = 0;
+	for(i=0;i<(LED_NUM);i++)
+	{
+		PWMx_WS2812C_Send_1byte(DataBuffer[i*3]);
+		PWMx_WS2812C_Send_1byte(DataBuffer[i*3+1]);
+		PWMx_WS2812C_Send_1byte(DataBuffer[i*3+2]);		
 	}
 	
 	setLED_ResetPulse(WS_RES_POS_BACK); 
+	
 #elif defined (ENABLE_SPI_TRIG_LED)	// SPI unable to keep pull low under 8 bit clock , unless use DMA
 	uint8_t i = 0;
 	signed int j = 0;
@@ -1217,6 +1444,7 @@ void setLED_Display(uint16_t DataCount)
 //		P13 = 0;
 	}
 	setLED_ResetPulse(WS_RES_POS_BACK);
+	
 #elif defined (ENABLE_GPIO_TRIG_LED)
 	uint8_t i = 0;
 //	signed int j = 0;
@@ -1226,9 +1454,9 @@ void setLED_Display(uint16_t DataCount)
 //	P13 = 1;	
 	for(i=0;i<(LED_NUM);i++)
 	{
-		GPIO_WS2812C_Send_1Bye(DataBuffer[i*3]);
-		GPIO_WS2812C_Send_1Bye(DataBuffer[i*3+1]);
-		GPIO_WS2812C_Send_1Bye(DataBuffer[i*3+2]);		
+		GPIO_WS2812C_Send_1Byte(DataBuffer[i*3]);
+		GPIO_WS2812C_Send_1Byte(DataBuffer[i*3+1]);
+		GPIO_WS2812C_Send_1Byte(DataBuffer[i*3+2]);		
 	}
 
 
@@ -1252,8 +1480,20 @@ void setLED_Display(uint16_t DataCount)
 	#endif
 //	P13 = 0;	
 	setLED_ResetPulse(WS_RES_POS_BACK);
-
-
+	
+#elif defined (ENABLE_TIMER1_GPIO_TRIG_LED)
+	uint8_t i = 0;
+	
+	setLED_ResetPulse(WS_RES_POS_FRONT);
+	
+	for(i=0;i<(LED_NUM);i++)
+	{
+		OP_WS2812C_Send_1Byte(DataBuffer[i*3]);
+		OP_WS2812C_Send_1Byte(DataBuffer[i*3+1]);
+		OP_WS2812C_Send_1Byte(DataBuffer[i*3+2]);		
+	}
+	
+	setLED_ResetPulse(WS_RES_POS_BACK);
 #endif
 }
 
@@ -1266,25 +1506,28 @@ void setLED_Color(uint8_t DeviceNumber ,uint8_t RED, uint8_t GREEN, uint8_t BLUE
 {
 	uint16_t index = 0;	
 	uint8_t i = 0;
-	#if defined (ENABLE_SPI_TRIG_LED) | defined (ENABLE_GPIO_TRIG_LED)	
+	#if defined (ENABLE_SPI_TRIG_LED) | defined (ENABLE_GPIO_TRIG_LED) | defined (ENABLE_PWM_TRIG_LED) | defined (ENABLE_TIMER1_GPIO_TRIG_LED)	
 	DataBuffer[DeviceNumber*3]   = GREEN;
 	DataBuffer[DeviceNumber*3+1] = RED;
 	DataBuffer[DeviceNumber*3+2] = BLUE;
 
-	#elif defined (ENABLE_PWM_TRIG_LED)
+	#elif defined (ENABLE_PWM_TRIG_LED__NOT_USE)
 	for	(i=0; i<8; i++) 	// GREEN data
 	{
 		DataBuffer[index + DeviceNumber*24] = ((GREEN<<i) & 0x80)?(WS_PWM_HIGH):(WS_PWM_LOW);
+//		printf("G :0x%2X\r\n",DataBuffer[index + DeviceNumber*24]);
 		index++ ;
 	}
 	for	(i=0; i<8; i++) 	// RED
 	{
 		DataBuffer[index + DeviceNumber*24] = ((RED<<i) & 0x80)?(WS_PWM_HIGH):(WS_PWM_LOW);
+//		printf("R :0x%2X\r\n",DataBuffer[index + DeviceNumber*24]);
 		index++ ;
 	}
 	for	(i=0; i<8; i++) 	// BLUE
 	{
 		DataBuffer[index + DeviceNumber*24] = ((BLUE<<i) & 0x80)?(WS_PWM_HIGH):(WS_PWM_LOW);
+//		printf("B :0x%2X\r\n",DataBuffer[index + DeviceNumber*24]);
 		index++ ;
 	}
 	#endif
@@ -1814,10 +2057,12 @@ void SimpleTest(void)
 //	setLED_Color(0, 0xFF, 0x00, 0x00);
 //	setLED_Display(LED_DATA_LEN);
 //	delay_ms(300);
+
 //	setLED_ColorWipe(0x00, 0x00, 0x00);
 //	delay_ms(1500);
-//	setLED_ColorWipe(0xFF, 0x00, 0x00);
-//	delay_ms(1500);
+
+//	setLED_ColorWipe(0xFF, 0x01, 0x02);
+//	delay_ms(1);
 //	setLED_ColorWipe(0x00, 0xFF, 0x00);
 //	delay_ms(1500);
 //	setLED_ColorWipe(0x00, 0x00, 0xFF);
@@ -1832,14 +2077,26 @@ void SimpleTest(void)
 //	delay_ms(1500);		
 //	setLED_ColorWipe(0x00, 0x00, 0x00);
 //	delay_ms(1500);
+
 //	setLED_ColorWipe(0xFF, 0xFF, 0xFF);
 //	delay_ms(1500);
 
-//	GPIO_WS2812C_Send_1bit(1);
+//	OP_WS2812C_Send_1bit(1);
 //	delay_ms(1);
-//	GPIO_WS2812C_Send_1bit(0);
-//	delay_ms(5);
+//	OP_WS2812C_Send_1bit(0);
+//	delay_ms(1);
 
+
+//	GPIO_WS2812C_DATA1();;
+//	delay_ms(1);
+//	GPIO_WS2812C_DATA0();;
+//	delay_ms(1);	
+//	GPIO_WS2812C_Send_1bit(0);
+//	GPIO_WS2812C_Send_1bit(0);
+//	GPIO_WS2812C_Send_1bit(0);
+//	GPIO_WS2812C_Send_1bit(0);
+//	GPIO_WS2812C_Send_1bit(0);	
+//	delay_ms(1);
 	
 //	delay(1);
 //	P00 = 0;
@@ -1863,7 +2120,7 @@ void SimpleTest(void)
 //	getCircularRing(30, 0xFF, 0xFF, 0xFF);
 //	getFromAToB(3, 4, 0x3F, 0, 0, 0xFF, 0, 0xFF);
 //	getColorWheel(5);
-	getAllColors(1);
+//	getAllColors(1);
 			
 //	setLED_ColorWipe(0xFF, 0xFF, 0xFF);//test
 //	SPI_Send_Data(0x01);
@@ -1882,6 +2139,7 @@ void StateMachine(void)
 	{
 		DemoState = state_Default+1;
 	}
+//	DemoState = 1;	//quick test
 
 	#if defined (ENABLE_UART0_LOG)
 	printf("demo : 0x%X\r\n",DemoState);
@@ -1939,7 +2197,7 @@ void StateMachine(void)
 //			break;	
 
 		case state_CircularRing:
-			getCircularRing(30, 0, 0, 20);
+			getCircularRing(30, 0x3F, 0x3F, 0x3F);
 			break;	
 		
 //		case state_FromAToB:	//not obviously
@@ -1952,10 +2210,10 @@ void StateMachine(void)
 }
 
 #if defined (ENABLE_GPIO_DEMO)
-void GPIO_Toggle(void)
-{
-    P12 ^= 1;
-}
+//void GPIO_Toggle(void)
+//{
+//    P12 ^= 1;
+//}
 
 void GPIO_Init(void)
 {
@@ -2103,18 +2361,21 @@ void main (void)
 	#endif
 
 	#if defined (ENABLE_PWM_TRIG_LED)
-	PWMx_CHx_Init();
+	PWMx_CHx_Initial();
 	#elif defined (ENABLE_SPI_TRIG_LED)	
 	SPI_Initial(SPI_6M);
 	#elif defined (ENABLE_GPIO_TRIG_LED)
 	GPIO_WS2812C_Initial();
+	#elif defined (ENABLE_TIMER1_GPIO_TRIG_LED)
+	Timer1_GPIO_Initial();
+	
 	#endif
 	
 
 	#if defined (ENABLE_TIMER0_1MS_IRQ)
 	BasicTimer_TIMER0_Init();
 	#endif
-//		
+	
     while(1)
     {		
 		StateMachine();
