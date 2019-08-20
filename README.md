@@ -8,9 +8,9 @@ Only define ENABLE_GPIO_TRIG_LED available
 
 2. upload picture for reference
 
-- bit 1 : high level 0.375*2 us , low level 0.375*1 us
+- bit 1 : high level 0.375x2 us , low level 0.375x1 us
 
-- bit 0 : high level 0.375*1 us , low level 0.375*2 us
+- bit 0 : high level 0.375x1 us , low level 0.375x2 us
 
 3. Demo procedure , change demo state per 500 ms
 
