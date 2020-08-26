@@ -33,7 +33,20 @@
 #define ENABLE_GPIO_TRIG_LED
 //#define ENABLE_TIMER1_GPIO_TRIG_LED
 
-#define LED_NUM 								(18)	//(18)
+//#define USE_P00
+//#define USE_P01
+#define USE_P12
+
+#if defined (USE_P00)
+#define set_LEDGPIO(x)			(P00 = x)
+#elif defined (USE_P01)
+#define set_LEDGPIO(x)			(P01 = x)
+#elif defined (USE_P12)
+#define set_LEDGPIO(x)			(P12 = x)
+#endif
+
+
+#define LED_NUM 								(6)	//(18)
 
 //#if defined (ENABLE_PWM_TRIG_LED)
 //#define LED_DATA_LEN 							(LED_NUM * 24)
@@ -132,7 +145,7 @@ uint16_t u16Cnt = 0;
 uint16_t u16Period = 0;
 #endif
 
-uint8_t DataBuffer[LED_DATA_LEN] = {0};
+volatile uint8_t xdata DataBuffer[LED_DATA_LEN] = {0};
 
 uint8_t DemoState = 0;
 
@@ -1090,23 +1103,23 @@ void Timer1_GPIO_Initial(void)
 #if defined (ENABLE_GPIO_TRIG_LED)
 void GPIO_WS2812C_DATA1(void)
 {				
-	P00 = 1;
+	set_LEDGPIO(1);
 	nop;nop;nop;nop;nop;
-	P00 = 1;
+	set_LEDGPIO(1);
 	nop;nop;nop;nop;nop;
 	
-	P00 = 0;
+	set_LEDGPIO(0);
 	nop;nop;nop;nop;nop;
 }
 
 void GPIO_WS2812C_DATA0(void)
 {	
-	P00 = 1;
+	set_LEDGPIO(1);
 	nop;nop;nop;nop;nop;
 			
-	P00 = 0;
+	set_LEDGPIO(0);
 	nop;nop;nop;nop;nop;
-	P00 = 0;
+	set_LEDGPIO(0);
 	nop;nop;nop;nop;nop;	
 }
 
@@ -1146,8 +1159,13 @@ void GPIO_WS2812C_Send_1bit(uint8_t Data)
 
 void GPIO_WS2812C_Initial(void)
 {      
-	P00_PUSHPULL_MODE;														// P00 (MOSI) Quasi mode
-
+	#if defined (USE_P00)
+	P00_PUSHPULL_MODE;														// P00 (MOSI) Quasi mode	
+	#elif defined (USE_P01)
+	P01_PUSHPULL_MODE;		
+	#elif defined (USE_P12)
+	P12_PUSHPULL_MODE;	
+	#endif
 }
 
 #endif
@@ -1388,7 +1406,7 @@ void setLED_ResetPulse(uint8_t pos)	//target : 280us
 		delay(MS_LED_LATCH);
 	}
 	#elif defined (ENABLE_GPIO_TRIG_LED) | defined (ENABLE_TIMER1_GPIO_TRIG_LED)
-	P00 = 0;
+	set_LEDGPIO(0);
 	
 	if (pos == WS_RES_POS_FRONT)	//57 us
 	{
@@ -1452,13 +1470,15 @@ void setLED_Display(uint16_t DataCount)
 	setLED_ResetPulse(WS_RES_POS_FRONT);
 	#if 1
 //	P13 = 1;	
+
+	clr_EA;
 	for(i=0;i<(LED_NUM);i++)
 	{
 		GPIO_WS2812C_Send_1Byte(DataBuffer[i*3]);
 		GPIO_WS2812C_Send_1Byte(DataBuffer[i*3+1]);
 		GPIO_WS2812C_Send_1Byte(DataBuffer[i*3+2]);		
 	}
-
+	set_EA;
 
 	#else
 	for(i=0;i<(LED_NUM);i++)
@@ -2129,6 +2149,10 @@ void SimpleTest(void)
 //	delay_ms(300);	
 //	setLED_ColorWipe(0x00,0x00,0x00);
 //	delay_ms(300);	
+
+	P13 = 1;
+	setLED_ColorWipe(255,0,0);
+	P13 = 0;	
 		
 }
 
@@ -2139,7 +2163,7 @@ void StateMachine(void)
 	{
 		DemoState = state_Default+1;
 	}
-//	DemoState = 1;	//quick test
+//	DemoState = state_AllColors;	//quick test
 
 	#if defined (ENABLE_UART0_LOG)
 	printf("demo : 0x%X\r\n",DemoState);
@@ -2375,11 +2399,13 @@ void main (void)
 	#if defined (ENABLE_TIMER0_1MS_IRQ)
 	BasicTimer_TIMER0_Init();
 	#endif
+
+	P13_PUSHPULL_MODE;	
 	
     while(1)
     {		
 		StateMachine();
-//		SimpleTest();		
+//		SimpleTest();
     }
 }
 
